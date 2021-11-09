@@ -6,6 +6,9 @@
 
 # No compiled files
 bin/
+# Test binaries for bn
+bn/bn_test
+
 
 # Object files
 *.o

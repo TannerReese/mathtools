@@ -345,8 +345,8 @@ bn_t bn_divi(bn_t quot, BN_SIGNED *remd, const bn_t src, BN_SIGNED divis){
 	// Negate the quotient if necessary
 	if(sneg ^ dvneg){
 		// Bit-wise not quotient `quot` -> `-quot - 1`
-		for(size_t i = 0; i < quot.length; i++) quot.digits[i] ^= BN_ALL_ONES;
-		calc -= divis;  // Swap remainder
+		bn_nota(quot);
+		calc -= divis;  // Swap remainder into negatives
 	}
 	
 	// Store remainder into pointer if given
@@ -378,49 +378,58 @@ bn_t bn_div(bn_t quot, bn_t remd, const bn_t src, const bn_t divis){
 		is_overlap(quot, divis)
 	) return num;
 	
-	size_t lead_idx = divis.length - 1;  // Index of leading digit of divis
-	while(lead_idx > 0 && divis.digits[lead_idx] == 0) lead_idx--;
-	BN_CALC_TYPE lead_dig = divis.digits[lead_idx];  // Leading digit of divis
+	// Use `remd` to store `divis`
+	// If `divis` is negative negate it
+	int dneg = bn_isneg(divis);
+	if(dneg) bn_neg(remd, divis);
+	else bn_move(remd, divis);
+	
+	size_t lead_idx = remd.length - 1;  // Index of leading digit of remd
+	while(lead_idx > 0 && remd.digits[lead_idx] == 0) lead_idx--;
+	BN_CALC_TYPE lead_dig = remd.digits[lead_idx];  // Leading digit of remd
 	
 	
-	// If divisor is zero leave
+	// If remdor is zero leave
 	if(lead_dig == 0) return num;
 	
 	// Figure out how much we can shift `lead_dig` left by
 	int shift = clz(lead_dig);
 	// Shift lead_dig and add bits from lower digit
 	lead_dig <<= shift;
-	if(lead_idx > 0) lead_dig |= divis.digits[lead_idx - 1] >> (8 * sizeof(BN_TYPE) - shift);
+	if(lead_idx > 0) lead_dig |= remd.digits[lead_idx - 1] >> (8 * sizeof(BN_TYPE) - shift);
 	lead_dig++;  // Add one to compensate for any lower bits that weren't included
 	
-	// Move source into quotient
-	bn_move(quot, src);
+	// Place dividend into `quot`
+	// If `src` is negative negate it
+	int sneg = bn_isneg(src);
+	if(sneg) bn_neg(quot, src);
+	else bn_move(quot, src);
 	
-	// Main Loop: Subtracting multiples of `divis` from `quot`
+	// Main Loop: Subtracting multiples of `remd` from `quot`
 	BN_CALC_TYPE calc = 0;  // Intermediate value for calculations
 	BN_TYPE top = 0;  // Store the digit immediately higher than the ith
-	for(size_t i = quot.length - 1; i >= divis.length - 1; i--){
+	for(size_t i = quot.length - 1; i >= lead_idx; i--){
 		// Have `calc` store the top two digits of the remaining value
 		calc = (((BN_CALC_TYPE)top) << (8 * sizeof(BN_TYPE))) | (BN_CALC_TYPE)(quot.digits[i]);
 		
-		// Calculate multiple of `divis` that fits in `digs`
+		// Calculate multiple of `remd` that fits in `digs`
 		// This is an underestimate (of at most 2) of the maximum possible multiple
 		BN_CALC_TYPE div = (calc << shift) / lead_dig;
 		BN_TYPE new_quot = 0;  // Store the new digit of the quotient
 		
 		// This needs to be looped since `div` could be 2 less than what is needed
-		while(calc >= divis.digits[lead_idx]){
-			// The loop below performs the operation `quot -= div * divis`
+		while(calc >= remd.digits[lead_idx]){
+			// The loop below performs the operation `quot -= div * remd`
 			
-			// Remove multiple of `divis` from `quot`
-			// Starting from lowest digit of `divis`
+			// Remove multiple of `remd` from `quot`
+			// Starting from lowest digit of `remd`
 			
 			// Track carries for the subtraction and multiplication separately
 			BN_CALC_TYPE sub_carry = 1, dv_carry = 0;
-			BN_TYPE *qd = quot.digits + i - divis.length + 1;  // Pointer to Digit in the quotient to manipulate
-			if(div > 0) for(size_t j = 0; j < divis.length; j++, qd++){
-				// Add scaled divis to the carry from the previous digit's multiplication
-				dv_carry += div * divis.digits[j];
+			BN_TYPE *qd = quot.digits + i - lead_idx;  // Pointer to Digit in the quotient to manipulate
+			if(div > 0) for(size_t j = 0; j <= lead_idx; j++, qd++){
+				// Add scaled remd to the carry from the previous digit's multiplication
+				dv_carry += div * remd.digits[j];
 				
 				// Subtract and set quotient digit
 				sub_carry += *qd;
@@ -452,24 +461,35 @@ bn_t bn_div(bn_t quot, bn_t remd, const bn_t src, const bn_t divis){
 	}
 	
 	// Move remaining value from `quot` into `remd`
-	memmove(remd.digits, quot.digits, sizeof(BN_TYPE) * (divis.length - 1));
+	memmove(remd.digits, quot.digits, sizeof(BN_TYPE) * lead_idx);
 	// Place remainder from `top` into most significant digit of `remd`
-	remd.digits[divis.length - 1] = top;
+	remd.digits[lead_idx] = top;
 	// Zero out remainder of `remd`
-	memset(remd.digits, 0x00, remd.length - divis.length);
+	memset(remd.digits + lead_idx + 1, 0x00, remd.length - 1 - lead_idx);
 	
 	// Move the digits of `quot` down covering the old remainder values
 	memmove(
 		quot.digits,
-		quot.digits + divis.length - 1,
-		sizeof(BN_TYPE) * (quot.length - divis.length + 1)
+		quot.digits + lead_idx,
+		sizeof(BN_TYPE) * (quot.length - lead_idx)
 	);
 	// Clear out the old quotient digits left after the move
 	memset(
-		quot.digits + quot.length - divis.length + 1,
+		quot.digits + quot.length - lead_idx,
 		0x00,
-		sizeof(BN_TYPE) * (divis.length - 1)
+		sizeof(BN_TYPE) * lead_idx
 	);
+	
+	
+	// Fix the signs of `remd` and `quot`
+	if(sneg != dneg){
+		// Perform bitwise not so `quot` -> `-quot - 1`
+		bn_nota(quot);
+		// Swap `remd` to negatives `remd` -> `remd - abs(divis)`
+		if(dneg) bn_adda(remd, divis);
+		else bn_suba(remd, divis);
+	}
+	if(sneg) bn_nega(remd);  // Flip sign if `sneg`
 	
 	return quot;
 }

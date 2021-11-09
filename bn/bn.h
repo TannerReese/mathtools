@@ -89,14 +89,16 @@ bn_t bn_not(bn_t dest, const bn_t src);
 bn_t bn_and(bn_t dest, const bn_t src1, const bn_t src2);
 #define bn_anda(dest, src) bn_and(dest, dest, src)
 bn_t bn_or(bn_t dest, const bn_t src1, const bn_t src2);
-#define bn_ora(dest, src) bn_and(dest, dest, src)
+#define bn_ora(dest, src) bn_or(dest, dest, src)
 bn_t bn_xor(bn_t dest, const bn_t src1, const bn_t src2);
-#define bn_xora(dest, src) bn_and(dest, dest, src)
+#define bn_xora(dest, src) bn_xor(dest, dest, src)
 
 // Shift Left (`shift` > 0)
 // Shift Right (`shift` < 0)
 bn_t bn_shl(bn_t dest, const bn_t src, int shift);
 #define bn_shla(dest, shift) bn_shl(dest, dest, shift)
+#define bn_shr(dest, src, shift) bn_shl(dest, src, -(shift))
+#define bn_shra(dest, shift) bn_shr(dest, dest, shift)
 
 // Negation of Big Numbers
 bn_t bn_neg(bn_t dest, const bn_t src);
